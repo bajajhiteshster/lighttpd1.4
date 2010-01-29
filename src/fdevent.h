@@ -178,30 +178,158 @@ typedef struct fdevents {
 	int (*fcntl_set)(struct fdevents *ev, int fd);
 } fdevents;
 
+/**
+ * Initialize a new list of fdevents.
+ *
+ * @param srv pointer to a server
+ * @param maxfds The maximum number of file descriptors to allow.
+ * @param type The type of handler to use (ex: FDEVENT_HANDLER_LINUX_SYSEPOLL).
+ * @return The new, empty list of fdevents.
+ */
 fdevents *fdevent_init(struct server *srv, size_t maxfds, fdevent_handler_t type);
-int fdevent_reset(fdevents *ev); /* "init" after fork() */
+
+/**
+ * If the registered fdevent handler supports it, reset the list.
+ *
+ * @param ev The list to reset (clear).
+ * @return 0 on success (or unsupported).
+ */
+int fdevent_reset(fdevents *ev);
+
+/**
+ * Free the memory associated with an fdevent handler list.
+ *
+ * @param ev The list to free.
+ */
 void fdevent_free(fdevents *ev);
 
-int fdevent_event_set(fdevents *ev, int *fde_ndx, int fd, int events); /* events can be FDEVENT_IN, FDEVENT_OUT or FDEVENT_IN | FDEVENT_OUT */
+
+/**
+ * Set a trigger for one or more events on a file descriptor. You should have called
+ * fdevent_register() before calling this.
+ *
+ * @param ev The list of events which the file descriptor has already been registered on.
+ * @param fde_ndx If provided and not -1, updates an existing event trigger. Otherwise,
+ *   adds a new trigger and, if provided, receives its index.
+ * @param fd The file descriptor to add the event trigger to.
+ * @param events A bitmask of the types of events to trigger on.
+ * @return 0 on success.
+ */
+int fdevent_event_set(fdevents *ev, int *fde_ndx, int fd, int events);
+
+/**
+ * Remove an event trigger.
+ *
+ * @param ev The list of events to remove from.
+ * @param fde_ndx The index of the event trigger to remove.
+ * @param fd The file descriptor to remove the trigger from.
+ * @return -1 on success.
+ */
 int fdevent_event_del(fdevents *ev, int *fde_ndx, int fd);
+
+/**
+ * Get a bitmask of the event(s) which triggered.
+ *
+ * @param ev The list of events.
+ * @param ndx The event index.
+ * @return A bitmask containing the event(s) which triggered.
+ */
 int fdevent_event_get_revent(fdevents *ev, size_t ndx);
+
+/**
+ * Get the file descriptor associated with the triggered events.
+ *
+ * @param ev The event list.
+ * @param ndx The event index.
+ * @return The file descriptor associated with the trigger.
+ */
 int fdevent_event_get_fd(fdevents *ev, size_t ndx);
+
+/**
+ * Get the handler function associated with the given file descriptor.
+ *
+ * @param ev The event list.
+ * @param fd The file descriptor.
+ * @return The handler function registered to handle events from that file descriptor.
+ */
 fdevent_handler fdevent_get_handler(fdevents *ev, int fd);
+
+/**
+ * Get the context pointer associated with the given file descriptor.
+ *
+ * @param ev The event list.
+ * @param fd The file descriptor.
+ * @return The context pointer (registered with the handler function) for the descriptor.
+ */
 void * fdevent_get_context(fdevents *ev, int fd);
 
+
+/**
+ * Move on to the next event index.
+ *
+ * @param ev The event list.
+ * @param ndx The last event index, or -1 to start from the beginning.
+ * @return The next event index, or -1 if there are none left.
+ */
 int fdevent_event_next_fdndx(fdevents *ev, int ndx);
 
+
+/**
+ * Poll for new events.
+ *
+ * @param ev The event list.
+ * @param timeout_ms The number of milliseconds to poll for.
+ * @return The number of events which occurred during that time.
+ */
 int fdevent_poll(fdevents *ev, int timeout_ms);
 
+
+/**
+ * Register a handler function to be notified of events on a file descriptor.
+ *
+ * @param ev The event list.
+ * @param fd The file descriptor.
+ * @param handle The handler function.
+ * @param ctx A pointer to some context, which will be passed to the function unaltered.
+ * @return 0 on success.
+ */
 int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx);
+
+/**
+ * Unregister a handler from a file descriptor. You should have removed all triggers with
+ * fdevent_event_del() before calling this.
+ *
+ * @param ev The event list.
+ * @param fd The file descriptor.
+ * @return 0 on success.
+ */
 int fdevent_unregister(fdevents *ev, int fd);
 
+/**
+ * Set all necessary fcntl options on the given file descriptor to make it usable by fdevent.
+ *
+ * @param ev The event list.
+ * @param fd The file descriptor.
+ * @return 0 on success.
+ */
 int fdevent_fcntl_set(fdevents *ev, int fd);
 
+/** Initialize select-based fdevent handling on the given event list. */
 int fdevent_select_init(fdevents *ev);
+
+/** Initialize poll-based fdevent handling on the given event list. */
 int fdevent_poll_init(fdevents *ev);
+
+/** Initialize Linux rtsig-based fdevent handling on the given event list. */
+int fdevent_linux_rtsig_init(fdevents *ev);
+
+/** Initialize Linux epoll-based fdevent handling on the given event list. */
 int fdevent_linux_sysepoll_init(fdevents *ev);
+
+/** Initialize Solaris devpoll-based fdevent handling on the given event list. */
 int fdevent_solaris_devpoll_init(fdevents *ev);
+
+/** Initialize FreeBSD kqueue-based fdevent handling on the given event list. */
 int fdevent_freebsd_kqueue_init(fdevents *ev);
 int fdevent_libev_init(fdevents *ev);
 

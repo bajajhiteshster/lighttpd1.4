@@ -896,9 +896,9 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 		con->read_idle_ts = srv->cur_ts;
 
 		switch(connection_handle_read(srv, con)) {
-		case -1:
+		case -1: /* connection error */
 			return -1;
-		case -2:
+		case -2: /* connection closed */
 			is_closed = 1;
 			break;
 		default:
@@ -906,10 +906,10 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 		}
 	}
 
-	/* the last chunk might be empty */
+	/* remove empty chunks from the chunkqueue */
 	for (c = cq->first; c;) {
 		if (cq->first == c && c->mem->used == 0) {
-			/* the first node is empty */
+			/* on the first node */
 			/* ... and it is empty, move it to unused */
 
 			cq->first = c->next;
@@ -922,8 +922,7 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 			c = cq->first;
 		} else if (c->next && c->next->mem->used == 0) {
 			chunk *fc;
-			/* next node is the last one */
-			/* ... and it is empty, move it to unused */
+			/* next node is empty, move it to unused*/
 
 			fc = c->next;
 			c->next = fc->next;
@@ -1006,6 +1005,7 @@ found_header_end:
 
 		/* found */
 		if (last_chunk) {
+			/* Copy the request from the chunkqueue into the request buffer */
 			buffer_reset(con->request.request);
 
 			for (c = cq->first; c; c = c->next) {
@@ -1040,13 +1040,16 @@ found_header_end:
 		}
 		break;
 	case CON_STATE_READ_POST:
+		/* Move data from the read queue to the request content queue */
 		for (c = cq->first; c && (dst_cq->bytes_in != (off_t)con->request.content_length); c = c->next) {
 			off_t weWant, weHave, toRead;
 
+			/* Number of bytes remaining in the request content to be moved */
 			weWant = con->request.content_length - dst_cq->bytes_in;
 
 			assert(c->mem->used);
 
+			/* Number of bytes left in the current chunk that we can move */
 			weHave = c->mem->used - c->offset - 1;
 
 			toRead = weHave > weWant ? weWant : weHave;
@@ -1116,6 +1119,7 @@ found_header_end:
 					break;
 				}
 
+				/* FIXME: Should this allow for EINTR and keep trying? */
 				if (toRead != write(dst_c->file.fd, c->mem->ptr + c->offset, toRead)) {
 					/* write failed for some reason ... disk full ? */
 					log_error_write(srv, __FILE__, __LINE__, "sbs",
@@ -1146,6 +1150,7 @@ found_header_end:
 				    dst_cq->last->type == MEM_CHUNK) {
 					b = dst_cq->last->mem;
 				} else {
+                    /* Small request content, buffer in memory */
 					b = chunkqueue_get_append_buffer(dst_cq);
 					/* prepare buffer size for remaining POST data; is < 64kb */
 					buffer_prepare_copy(b, con->request.content_length - dst_cq->bytes_in + 1);
@@ -1166,12 +1171,13 @@ found_header_end:
 	default: break;
 	}
 
-	/* the connection got closed and we didn't got enough data to leave one of the READ states
+	/* the connection got closed and we didn't get enough data to leave one of the READ states
 	 * the only way is to leave here */
 	if (is_closed && ostate == con->state) {
 		connection_set_state(srv, con, CON_STATE_ERROR);
 	}
 
+	/* This data was copied some place else, don't keep it around */
 	chunkqueue_remove_finished_chunks(cq);
 
 	return 0;

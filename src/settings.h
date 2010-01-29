@@ -31,12 +31,26 @@
  */
 #define MAX_HTTP_REQUEST_HEADER  (32 * 1024)
 
-typedef enum { HANDLER_UNSET,
+typedef enum {
+		/** Not used. */
+		HANDLER_UNSET,
+
+		/** Handler finished successfully, allow next handler to run. */
 		HANDLER_GO_ON,
+
+		/** Handler completed all necessary work, do not run any more handlers. */
 		HANDLER_FINISHED,
+
+		/** Handler not yet finished, stop processing here until next round. */
 		HANDLER_COMEBACK,
+
+		/** Handler stalled waiting for an event, stop processing here until next round. */
 		HANDLER_WAIT_FOR_EVENT,
+
+		/** Handler failed, stop all processing. */
 		HANDLER_ERROR,
+
+		/** Handler needs an FD, but there are none available, stop processing here until next round. */
 		HANDLER_WAIT_FOR_FD
 } handler_t;
 
