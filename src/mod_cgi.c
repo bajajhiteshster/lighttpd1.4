@@ -75,6 +75,8 @@ typedef struct {
 	int from_cgi;
 	int fde_ndx; /* index into the fd-event buffer */
 
+	int to_cgi;
+
 	connection *remote_conn;  /* dumb pointer */
 	plugin_data *plugin_data; /* dumb pointer */
 
@@ -181,6 +183,99 @@ SETDEFAULTS_FUNC(mod_fastcgi_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
+JOBLIST_FUNC(mod_cgi_joblist) {
+	plugin_data *p = p_d;
+	handler_ctx *hctx = con->plugin_ctx[p->id];
+	chunkqueue *cq = con->request_content_queue;
+	chunk *c;
+
+	if (!hctx) {
+		/* Stale entry in the joblist, get out now */
+		return HANDLER_FINISHED;
+	}
+
+	/* there is content to send */
+	for (c = cq->first; c; c = cq->first) {
+		int r = 0;
+
+		/* copy all chunks */
+		switch(c->type) {
+		case FILE_CHUNK:
+
+			if (c->file.mmap.start == MAP_FAILED) {
+				if (-1 == c->file.fd &&  /* open the file if not already open */
+				    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
+					log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
+
+					return HANDLER_ERROR;
+				}
+
+				c->file.mmap.length = c->file.length;
+
+				if (MAP_FAILED == (c->file.mmap.start = mmap(0,  c->file.mmap.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
+					log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ",
+							strerror(errno), c->file.name,  c->file.fd);
+
+					return HANDLER_ERROR;
+				}
+
+				close(c->file.fd);
+				c->file.fd = -1;
+
+				/* chunk_reset() or chunk_free() will cleanup for us */
+			}
+
+			if ((r = write(hctx->to_cgi, c->file.mmap.start + c->offset, c->file.length - c->offset)) < 0) {
+				switch(errno) {
+				case ENOSPC:
+					con->http_status = 507;
+					break;
+				case EINTR:
+					continue;
+				default:
+					con->http_status = 403;
+					break;
+				}
+			}
+			break;
+		case MEM_CHUNK:
+			if ((r = write(hctx->to_cgi, c->mem->ptr + c->offset, c->mem->used - c->offset - 1)) < 0) {
+				switch(errno) {
+				case ENOSPC:
+					con->http_status = 507;
+					break;
+				case EINTR:
+					continue;
+				default:
+					con->http_status = 403;
+					break;
+				}
+			}
+			break;
+		case UNUSED_CHUNK:
+			break;
+		}
+
+		if (r > 0) {
+			c->offset += r;
+			cq->bytes_out += r;
+			con->post_out += r;
+		} else {
+			log_error_write(srv, __FILE__, __LINE__, "ss", "write() failed due to: ", strerror(errno));
+			con->http_status = 500;
+			break;
+		}
+
+		chunkqueue_remove_finished_chunks(cq);
+	}
+
+	if (con->http_status > 0 &&
+	    con->http_status != 200) {
+		return HANDLER_ERROR;
+	}
+
+	return HANDLER_GO_ON;
+}
 
 static int cgi_pid_add(server *srv, plugin_data *p, pid_t pid) {
 	int m = -1;
@@ -534,6 +629,11 @@ static handler_t cgi_connection_close(server *srv, handler_ctx *hctx) {
 
 		hctx->from_cgi = -1;
 		hctx->fde_ndx = -1;
+	}
+
+	if (hctx->to_cgi != -1) {
+		close(hctx->to_cgi);
+		hctx->to_cgi = -1;
 	}
 
 	pid = hctx->pid;
@@ -1056,94 +1156,21 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		close(from_cgi_fds[1]);
 		close(to_cgi_fds[0]);
 
-		if (con->request.content_length) {
-			chunkqueue *cq = con->request_content_queue;
-			chunk *c;
-
-			assert(chunkqueue_length(cq) == (off_t)con->request.content_length);
-
-			/* there is content to send */
-			for (c = cq->first; c; c = cq->first) {
-				int r = 0;
-
-				/* copy all chunks */
-				switch(c->type) {
-				case FILE_CHUNK:
-
-					if (c->file.mmap.start == MAP_FAILED) {
-						if (-1 == c->file.fd &&  /* open the file if not already open */
-						    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-							log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
-
-							close(from_cgi_fds[0]);
-							close(to_cgi_fds[1]);
-							return -1;
-						}
-
-						c->file.mmap.length = c->file.length;
-
-						if (MAP_FAILED == (c->file.mmap.start = mmap(0,  c->file.mmap.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
-							log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ",
-									strerror(errno), c->file.name,  c->file.fd);
-
-							close(from_cgi_fds[0]);
-							close(to_cgi_fds[1]);
-							return -1;
-						}
-
-						close(c->file.fd);
-						c->file.fd = -1;
-
-						/* chunk_reset() or chunk_free() will cleanup for us */
-					}
-
-					if ((r = write(to_cgi_fds[1], c->file.mmap.start + c->offset, c->file.length - c->offset)) < 0) {
-						switch(errno) {
-						case ENOSPC:
-							con->http_status = 507;
-							break;
-						case EINTR:
-							continue;
-						default:
-							con->http_status = 403;
-							break;
-						}
-					}
-					break;
-				case MEM_CHUNK:
-					if ((r = write(to_cgi_fds[1], c->mem->ptr + c->offset, c->mem->used - c->offset - 1)) < 0) {
-						switch(errno) {
-						case ENOSPC:
-							con->http_status = 507;
-							break;
-						case EINTR:
-							continue;
-						default:
-							con->http_status = 403;
-							break;
-						}
-					}
-					break;
-				case UNUSED_CHUNK:
-					break;
-				}
-
-				if (r > 0) {
-					c->offset += r;
-					cq->bytes_out += r;
-				} else {
-					log_error_write(srv, __FILE__, __LINE__, "ss", "write() failed due to: ", strerror(errno)); 
-					con->http_status = 500;
-					break;
-				}
-				chunkqueue_remove_finished_chunks(cq);
-			}
-		}
-
-		close(to_cgi_fds[1]);
-
 		/* register PID and wait for them asyncronously */
 		con->mode = p->id;
+
+		if (con->request.content_length) {
+			chunkqueue *cq = con->request_content_queue;
+
+			if (!srv->srvconf.use_minbuffer) {
+				/* This likely will not be true if using minbuffer */
+				assert(chunkqueue_length(cq) == (off_t)con->request.content_length);
+			}
+
+			/* Let the joblist function send the data to the CGI */
+			joblist_append(srv, con);
+		}
+
 		buffer_reset(con->physical.path);
 
 		hctx = cgi_handler_ctx_init();
@@ -1152,6 +1179,14 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		hctx->plugin_data = p;
 		hctx->pid = pid;
 		hctx->from_cgi = from_cgi_fds[0];
+
+		if (con->request.content_length) {
+			hctx->to_cgi = to_cgi_fds[1];
+		} else {
+			close(to_cgi_fds[1]);
+			hctx->to_cgi = -1;
+		}
+
 		hctx->fde_ndx = -1;
 
 		con->plugin_ctx[p->id] = hctx;
@@ -1420,6 +1455,7 @@ int mod_cgi_plugin_init(plugin *p) {
 	p->init           = mod_cgi_init;
 	p->cleanup        = mod_cgi_free;
 	p->set_defaults   = mod_fastcgi_set_defaults;
+	p->handle_joblist = mod_cgi_joblist;
 
 	p->data        = NULL;
 
