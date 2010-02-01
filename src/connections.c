@@ -949,8 +949,7 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 	/* we might have got several packets at once
 	 */
 
-	switch(ostate) {
-	case CON_STATE_READ:
+	if (ostate == CON_STATE_READ) {
 		/* if there is a \r\n\r\n in the chunkqueue
 		 *
 		 * scan the chunk-queue twice
@@ -1042,8 +1041,11 @@ found_header_end:
 			con->keep_alive = 0;
 			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 		}
-		break;
-	case CON_STATE_READ_POST:
+	} else if (ostate == CON_STATE_READ_POST ||
+		   (ostate > CON_STATE_READ &&
+		    con->request.content_length > 0 &&
+		    srv->srvconf.use_minbuffer &&
+		    !con->got_request)) {
 		/* Move data from the read queue to the request content queue */
 		for (c = cq->first; c && (dst_cq->bytes_in != (off_t)con->request.content_length); c = c->next) {
 			off_t weWant, weHave, toRead;
@@ -1059,7 +1061,8 @@ found_header_end:
 			toRead = weHave > weWant ? weWant : weHave;
 
 			/* the new way, copy everything into a chunkqueue whcih might use tempfiles */
-			if (con->request.content_length > 64 * 1024) {
+			if (con->request.content_length > 64 * 1024 &&
+			    !srv->srvconf.use_minbuffer) { /* Don't use tempfiles if use_minbuffer */
 				chunk *dst_c = NULL;
 				/* copy everything to max 1Mb sized tempfiles */
 
@@ -1169,10 +1172,8 @@ found_header_end:
 		/* Content is ready */
 		if (dst_cq->bytes_in == (off_t)con->request.content_length) {
 			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
+			con->got_request = 1;
 		}
-
-		break;
-	default: break;
 	}
 
 	/* the connection got closed and we didn't get enough data to leave one of the READ states
@@ -1246,7 +1247,18 @@ static handler_t connection_handle_fdevent(server *srv, void *context, int reven
 	}
 
 	if (con->state == CON_STATE_READ ||
-	    con->state == CON_STATE_READ_POST) {
+	    con->state == CON_STATE_READ_POST ||
+	    (con->state > CON_STATE_READ &&
+	     srv->srvconf.use_minbuffer &&
+	     con->request.content_length > 0 &&
+	     !con->got_request)) {
+		/* Make sure that if we're using minbuffer, we're out of READ_POST */
+		if (srv->srvconf.use_minbuffer &&
+		    con->state == CON_STATE_READ_POST &&
+		    con->request.content_length > 0) {
+			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
+		}
+
 		connection_handle_read_state(srv, con);
 	}
 
@@ -1394,6 +1406,18 @@ int connection_state_machine(server *srv, connection *con) {
 
 	while (done == 0) {
 		size_t ostate = con->state;
+
+		if (con->state > CON_STATE_READ) {
+			if (srv->srvconf.use_minbuffer &&
+			    con->request.content_length > 0 &&
+			    !con->got_request) {
+				/* Continue reading another piece of the request */
+
+				if (con->is_readable) {
+					connection_handle_read_state(srv, con);
+				}
+			}
+		}
 
 		switch (con->state) {
 		case CON_STATE_REQUEST_START: /* transient */
@@ -1647,6 +1671,11 @@ int connection_state_machine(server *srv, connection *con) {
 
 			break;
 		case CON_STATE_READ_POST:
+			if (srv->srvconf.use_minbuffer) {
+				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
+			}
+
+			/* Fall through */
 		case CON_STATE_READ:
 			if (srv->srvconf.log_state_handling) {
 				log_error_write(srv, __FILE__, __LINE__, "sds",
@@ -1820,6 +1849,13 @@ int connection_state_machine(server *srv, connection *con) {
 	default:
 		fdevent_event_del(srv->ev, &(con->fde_ndx), con->fd);
 		break;
+	}
+
+	if (con->state > CON_STATE_READ &&
+	    con->request.content_length > 0 &&
+	    srv->srvconf.use_minbuffer &&
+	    !con->got_request) {
+		fdevent_event_set(srv->ev, &(con->fde_ndx), con->fd, FDEVENT_IN);
 	}
 
 	return 0;
