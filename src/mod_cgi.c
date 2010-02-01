@@ -72,7 +72,7 @@ typedef struct {
 
 typedef struct {
 	pid_t pid;
-	int fd;
+	int from_cgi;
 	int fde_ndx; /* index into the fd-event buffer */
 
 	connection *remote_conn;  /* dumb pointer */
@@ -343,13 +343,13 @@ static int cgi_demux_response(server *srv, handler_ctx *hctx) {
 		int n;
 
 		buffer_prepare_copy(hctx->response, 1024);
-		if (-1 == (n = read(hctx->fd, hctx->response->ptr, hctx->response->size - 1))) {
+		if (-1 == (n = read(hctx->from_cgi, hctx->response->ptr, hctx->response->size - 1))) {
 			if (errno == EAGAIN || errno == EINTR) {
 				/* would block, wait for signal */
 				return FDEVENT_HANDLED_NOT_FINISHED;
 			}
 			/* error */
-			log_error_write(srv, __FILE__, __LINE__, "sdd", strerror(errno), con->fd, hctx->fd);
+			log_error_write(srv, __FILE__, __LINE__, "sdd", strerror(errno), con->fd, hctx->from_cgi);
 			return FDEVENT_HANDLED_ERROR;
 		}
 
@@ -495,7 +495,7 @@ static int cgi_demux_response(server *srv, handler_ctx *hctx) {
 		}
 
 #if 0
-		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->fd, connection_get_state(con->state), b->ptr);
+		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->from_cgi, connection_get_state(con->state), b->ptr);
 #endif
 	}
 
@@ -523,16 +523,16 @@ static handler_t cgi_connection_close(server *srv, handler_ctx *hctx) {
 	 * close cgi-connection
 	 */
 
-	if (hctx->fd != -1) {
+	if (hctx->from_cgi != -1) {
 		/* close connection to the cgi-script */
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
+		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->from_cgi);
+		fdevent_unregister(srv->ev, hctx->from_cgi);
 
-		if (close(hctx->fd)) {
-			log_error_write(srv, __FILE__, __LINE__, "sds", "cgi close failed ", hctx->fd, strerror(errno));
+		if (close(hctx->from_cgi)) {
+			log_error_write(srv, __FILE__, __LINE__, "sds", "cgi close failed ", hctx->from_cgi, strerror(errno));
 		}
 
-		hctx->fd = -1;
+		hctx->from_cgi = -1;
 		hctx->fde_ndx = -1;
 	}
 
@@ -615,8 +615,8 @@ static handler_t cgi_handle_fdevent(server *srv, void *ctx, int revents) {
 
 	joblist_append(srv, con);
 
-	if (hctx->fd == -1) {
-		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->fd, connection_get_state(con->state), "invalid cgi-fd");
+	if (hctx->from_cgi == -1) {
+		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->from_cgi, connection_get_state(con->state), "invalid cgi-fd");
 
 		return HANDLER_ERROR;
 	}
@@ -629,7 +629,7 @@ static handler_t cgi_handle_fdevent(server *srv, void *ctx, int revents) {
 			/* we are done */
 
 #if 0
-			log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->fd, connection_get_state(con->state), "finished");
+			log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->from_cgi, connection_get_state(con->state), "finished");
 #endif
 			cgi_connection_close(srv, hctx);
 
@@ -680,7 +680,7 @@ static handler_t cgi_handle_fdevent(server *srv, void *ctx, int revents) {
 		}
 
 # if 0
-		log_error_write(srv, __FILE__, __LINE__, "sddd", "got HUP from cgi", con->fd, hctx->fd, revents);
+		log_error_write(srv, __FILE__, __LINE__, "sddd", "got HUP from cgi", con->fd, hctx->from_cgi, revents);
 # endif
 
 		/* rtsigs didn't liked the close */
@@ -1151,23 +1151,23 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		hctx->remote_conn = con;
 		hctx->plugin_data = p;
 		hctx->pid = pid;
-		hctx->fd = from_cgi_fds[0];
+		hctx->from_cgi = from_cgi_fds[0];
 		hctx->fde_ndx = -1;
 
 		con->plugin_ctx[p->id] = hctx;
 
-		fdevent_register(srv->ev, hctx->fd, cgi_handle_fdevent, hctx);
-		fdevent_event_set(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+		fdevent_register(srv->ev, hctx->from_cgi, cgi_handle_fdevent, hctx);
+		fdevent_event_set(srv->ev, &(hctx->fde_ndx), hctx->from_cgi, FDEVENT_IN);
 
-		if (-1 == fdevent_fcntl_set(srv->ev, hctx->fd)) {
+		if (-1 == fdevent_fcntl_set(srv->ev, hctx->from_cgi)) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "fcntl failed: ", strerror(errno));
 
-			fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-			fdevent_unregister(srv->ev, hctx->fd);
+			fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->from_cgi);
+			fdevent_unregister(srv->ev, hctx->from_cgi);
 
-			log_error_write(srv, __FILE__, __LINE__, "sd", "cgi close:", hctx->fd);
+			log_error_write(srv, __FILE__, __LINE__, "sd", "cgi close:", hctx->from_cgi);
 
-			close(hctx->fd);
+			close(hctx->from_cgi);
 
 			cgi_handler_ctx_free(hctx);
 
@@ -1355,11 +1355,11 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 
 		hctx->pid = 0;
 
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
+		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->from_cgi);
+		fdevent_unregister(srv->ev, hctx->from_cgi);
 
-		if (close(hctx->fd)) {
-			log_error_write(srv, __FILE__, __LINE__, "sds", "cgi close failed ", hctx->fd, strerror(errno));
+		if (close(hctx->from_cgi)) {
+			log_error_write(srv, __FILE__, __LINE__, "sds", "cgi close failed ", hctx->from_cgi, strerror(errno));
 		}
 
 		cgi_handler_ctx_free(hctx);
@@ -1387,11 +1387,11 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 		con->http_status = 500;
 		con->mode = DIRECT;
 
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
+		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->from_cgi);
+		fdevent_unregister(srv->ev, hctx->from_cgi);
 
-		if (close(hctx->fd)) {
-			log_error_write(srv, __FILE__, __LINE__, "sds", "cgi close failed ", hctx->fd, strerror(errno));
+		if (close(hctx->from_cgi)) {
+			log_error_write(srv, __FILE__, __LINE__, "sds", "cgi close failed ", hctx->from_cgi, strerror(errno));
 		}
 
 		cgi_handler_ctx_free(hctx);
