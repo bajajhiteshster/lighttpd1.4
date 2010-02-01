@@ -409,6 +409,7 @@ typedef struct {
 	array  *environment; /* used to pass lighttpd internal stuff to the FastCGI/CGI apps, setenv does that */
 
         int got_request; /* used when srvconf.use_minbuffer is set to indicate that the full request has been read */
+        size_t post_out; /* used by mod_cgi to track bytes written to the CGI */
 
 	/* response */
 	int    got_response;

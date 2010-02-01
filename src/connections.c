@@ -661,6 +661,7 @@ connection *connection_init(server *srv) {
 	con->bytes_header = 0;
 	con->loops_per_request = 0;
 	con->got_request = 0;
+	con->post_out = 0;
 
 #define CLEAN(x) \
 	con->x = buffer_init();
@@ -782,6 +783,7 @@ int connection_reset(server *srv, connection *con) {
 	con->file_started = 0;
 	con->got_response = 0;
 	con->got_request = 0;
+	con->post_out = 0;
 
 	con->parsed_response = 0;
 
