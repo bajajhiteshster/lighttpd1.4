@@ -243,6 +243,7 @@ static server *server_init(void) {
 	srv->srvconf.network_backend = buffer_init();
 	srv->srvconf.upload_tempdirs = array_init();
 	srv->srvconf.reject_expect_100_with_417 = 1;
+	srv->srvconf.use_minbuffer = 0;
 
 	/* use syslog */
 	srv->errorlog_fd = STDERR_FILENO;
