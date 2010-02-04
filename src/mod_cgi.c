@@ -259,7 +259,6 @@ JOBLIST_FUNC(mod_cgi_joblist) {
 		if (r > 0) {
 			c->offset += r;
 			cq->bytes_out += r;
-			con->post_out += r;
 		} else {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "write() failed due to: ", strerror(errno));
 			con->http_status = 500;

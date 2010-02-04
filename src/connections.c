@@ -661,7 +661,6 @@ connection *connection_init(server *srv) {
 	con->bytes_header = 0;
 	con->loops_per_request = 0;
 	con->got_request = 0;
-	con->post_out = 0;
 
 #define CLEAN(x) \
 	con->x = buffer_init();
@@ -783,7 +782,6 @@ int connection_reset(server *srv, connection *con) {
 	con->file_started = 0;
 	con->got_response = 0;
 	con->got_request = 0;
-	con->post_out = 0;
 
 	con->parsed_response = 0;
 
@@ -1171,8 +1169,12 @@ found_header_end:
 
 		/* Content is ready */
 		if (dst_cq->bytes_in == (off_t)con->request.content_length) {
-			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 			con->got_request = 1;
+
+			/* Already moved on if using minbuffer */
+			if (!srv->srvconf.use_minbuffer) {
+				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
+			}
 		}
 	}
 
