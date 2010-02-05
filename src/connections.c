@@ -1054,7 +1054,7 @@ found_header_end:
 			assert(c->mem->used);
 
 			/* Number of bytes left in the current chunk that we can move */
-			weHave = c->mem->used - c->offset - 1;
+			weHave = c->mem->used - c->offset - 1; /* -1 because the read function always appends a \0 */
 
 			toRead = weHave > weWant ? weWant : weHave;
 
