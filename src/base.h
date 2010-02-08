@@ -408,7 +408,7 @@ typedef struct {
 	buffer *authed_user;
 	array  *environment; /* used to pass lighttpd internal stuff to the FastCGI/CGI apps, setenv does that */
 
-        int got_request; /* used when srvconf.use_minbuffer is set to indicate that the full request has been read */
+	int got_request; /* used when srvconf.use_minbuffer is set to indicate that the full request has been read */
 
 	/* response */
 	int    got_response;
