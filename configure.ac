@@ -220,6 +220,9 @@ AC_SEARCH_LIBS(socket,socket)
 AC_SEARCH_LIBS(gethostbyname,nsl socket)
 AC_SEARCH_LIBS(hstrerror,resolv)
 
+dnl clock_gettime needs -lrt
+AC_SEARCH_LIBS(clock_gettime,rt)
+
 save_LIBS=$LIBS
 AC_SEARCH_LIBS(dlopen,dl,[
   AC_CHECK_HEADERS([dlfcn.h],[
