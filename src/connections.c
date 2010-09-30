@@ -895,7 +895,7 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 	int is_closed = 0; /* the connection got closed, if we don't have a complete header, -> error */
 
 	if (con->is_readable) {
-		con->read_idle_ts = srv->cur_ts;
+		con->read_idle_mt = srv->cur_mt;
 
 		switch(connection_handle_read(srv, con)) {
 		case -1: /* connection error */
@@ -1275,7 +1275,7 @@ static handler_t connection_handle_fdevent(server *srv, void *context, int reven
 					con->fd,
 					"handle write failed.");
 		} else if (con->state == CON_STATE_WRITE) {
-			con->write_request_ts = srv->cur_ts;
+			con->write_request_mt = srv->cur_mt;
 		}
 	}
 
@@ -1429,7 +1429,7 @@ int connection_state_machine(server *srv, connection *con) {
 			}
 
 			con->request_start = srv->cur_ts;
-			con->read_idle_ts = srv->cur_ts;
+			con->read_idle_mt = srv->cur_mt;
 
 			con->request_count++;
 			con->loops_per_request = 0;
@@ -1708,7 +1708,7 @@ int connection_state_machine(server *srv, connection *con) {
 							"handle write failed.");
 					connection_set_state(srv, con, CON_STATE_ERROR);
 				} else if (con->state == CON_STATE_WRITE) {
-					con->write_request_ts = srv->cur_ts;
+					con->write_request_mt = srv->cur_mt;
 				}
 			}
 

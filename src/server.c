@@ -167,6 +167,14 @@ static void daemonize(void) {
 }
 #endif
 
+static time_t monotonic_time()
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec;
+}
+
 static server *server_init(void) {
 	int i;
 	FILE *frandom = NULL;
@@ -1170,6 +1178,7 @@ int main (int argc, char **argv) {
 		int n;
 		size_t ndx;
 		time_t min_ts;
+		time_t min_mt;
 
 		if (handle_sig_hup) {
 			handler_t r;
@@ -1216,6 +1225,7 @@ int main (int argc, char **argv) {
 
 			/* get current time */
 			min_ts = time(NULL);
+                        min_mt = monotonic_time();
 
 			if (min_ts != srv->cur_ts) {
 				int cs = 0;
@@ -1235,9 +1245,11 @@ int main (int argc, char **argv) {
 
 				/* trigger waitpid */
 				srv->cur_ts = min_ts;
+				srv->cur_mt = min_mt;
 
 				/* cleanup stat-cache */
 				stat_cache_trigger_cleanup(srv);
+
 				/**
 				 * check all connections for timeouts
 				 *
@@ -1252,7 +1264,7 @@ int main (int argc, char **argv) {
 					if (con->state == CON_STATE_READ ||
 					    con->state == CON_STATE_READ_POST) {
 						if (con->request_count == 1) {
-							if (srv->cur_ts - con->read_idle_ts > con->conf.max_read_idle) {
+							if (srv->cur_mt - con->read_idle_mt > con->conf.max_read_idle) {
 								/* time - out */
 #if 0
 								log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -1262,7 +1274,7 @@ int main (int argc, char **argv) {
 								changed = 1;
 							}
 						} else {
-							if (srv->cur_ts - con->read_idle_ts > con->keep_alive_idle) {
+							if (srv->cur_mt - con->read_idle_mt > con->keep_alive_idle) {
 								/* time - out */
 #if 0
 								log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -1275,7 +1287,7 @@ int main (int argc, char **argv) {
 					}
 
 					if ((con->state == CON_STATE_WRITE) &&
-					    (con->write_request_ts != 0)) {
+					    (con->write_request_mt != 0)) {
 #if 0
 						if (srv->cur_ts - con->write_request_ts > 60) {
 							log_error_write(srv, __FILE__, __LINE__, "sdd",
@@ -1283,7 +1295,7 @@ int main (int argc, char **argv) {
 						}
 #endif
 
-						if (srv->cur_ts - con->write_request_ts > con->conf.max_write_idle) {
+						if (srv->cur_mt - con->write_request_mt > con->conf.max_write_idle) {
 							/* time - out */
 							if (con->conf.log_timeouts) {
 								log_error_write(srv, __FILE__, __LINE__, "sbsosds",
@@ -1529,3 +1541,4 @@ int main (int argc, char **argv) {
 
 	return 0;
 }
+

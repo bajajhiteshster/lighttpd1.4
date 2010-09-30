@@ -348,9 +348,9 @@ typedef struct {
 	connection_state_t state;
 
 	/* timestamps */
-	time_t read_idle_ts;
+	time_t read_idle_mt;
 	time_t close_timeout_ts;
-	time_t write_request_ts;
+	time_t write_request_mt;
 
 	time_t connection_start;
 	time_t request_start;
@@ -599,6 +599,7 @@ typedef struct server {
 
 	/* Timestamps */
 	time_t cur_ts;
+	time_t cur_mt; /* monotonic */
 	time_t last_generated_date_ts;
 	time_t last_generated_debug_ts;
 	time_t startup_ts;
